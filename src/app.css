@@ -23,9 +23,12 @@ body {
   flex-direction: column;
   align-items: center;
   /* The window is deliberately larger than the sprite so the pulse ring, the
-     badge and the chip can overflow harmlessly (§6.1). The shell derives the
-     hit rectangle from this same offset. */
-  padding-top: calc(10 * var(--px));
+     badge and the chip can overflow harmlessly (§6.1).
+
+     This offset is SPRITE_Y_RATIO in crates/clawd-core/src/layout.rs, from
+     which the shell derives the hit rectangle. Change one and you must change
+     the other, or clicks will land off the pet. */
+  padding-top: calc(0.45 * var(--clawd-size));
 }
 
 /* Only the body is grabbable; the rest of the window is click-through, which

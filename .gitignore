@@ -6,4 +6,4 @@ src-tauri/gen/
 .DS_Store
 *.local
 .vite/
-screenshots/
+# screenshots/ is committed: the README shows the ten states.

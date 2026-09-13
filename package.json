@@ -10,7 +10,9 @@
     "preview": "vite preview",
     "test": "vitest run",
     "tauri": "tauri",
-    "gallery": "vite --open /gallery.html"
+    "gallery": "vite --open /gallery.html",
+    "tauri:dev": "tauri dev -f devtools",
+    "tauri:build": "tauri build"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",

@@ -7,6 +7,7 @@
 pub mod config;
 pub mod event;
 pub mod label;
+pub mod layout;
 pub mod machine;
 pub mod mock;
 pub mod source;
@@ -14,6 +15,7 @@ pub mod state;
 
 pub use config::Timings;
 pub use event::{EventKind, FailureKind, SessionEvent};
+pub use layout::{Layout, Rect};
 pub use machine::{Machine, Snapshot};
 pub use source::{EventSink, EventSource};
 pub use state::ClawdState;

@@ -56,6 +56,12 @@ impl ClawdState {
         }
     }
 
+    /// Look a state up by its wire name. Used by the dev harness to turn a
+    /// key press into an event (§8.1).
+    pub fn parse(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|state| state.as_str() == name)
+    }
+
     /// Every state, in the order the dev harness binds them to keys 1-0 (§8.1).
     pub const ALL: [ClawdState; 10] = [
         Self::Idle,

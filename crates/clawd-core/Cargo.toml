@@ -1,0 +1,13 @@
+[package]
+name = "clawd-core"
+description = "Clawd's session state machine. Deliberately free of any Tauri or UI dependency."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

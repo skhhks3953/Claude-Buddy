@@ -1,0 +1,21 @@
+# `src-tauri` is deliberately excluded and carries its own workspace marker.
+#
+# Building the Tauri shell needs a platform webview (WebKit on macOS, WebView2
+# on Windows). Keeping it out means `cargo test` at the root builds and runs
+# the state machine anywhere, including CI boxes and Linux containers with no
+# webview at all — which is precisely the property §3 wanted from putting the
+# machine in Rust and keeping it UI-free.
+[workspace]
+members = ["crates/clawd-core"]
+exclude = ["src-tauri"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/skhhks3953/Claude-Buddy"
+
+[workspace.dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

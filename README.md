@@ -54,7 +54,17 @@ real IPC and the real renderer. They do not set states. Pressing `9` asks for
 the tool call that *earns* the long-task pose, and the pose arrives only when
 the timer says so — the harness cannot produce a state the machine would not.
 
-The same three extras are in the tray menu under `Dev ·`.
+The same three extras are in the tray menu under `Dev ·`. The scripted run is
+what surfaces ugly transitions and label thrash, which stepping one state at a
+time cannot — here it is, from prompt through a permission request to the
+long-task meter being earned by the clock:
+
+![The scripted run](screenshots/live-script.png)
+
+Drag from anywhere on the body. Clawd tilts while held and settles on release,
+remembering the spot per display:
+
+![Dragging](screenshots/live-drag.png)
 
 ## Shipping it
 

@@ -25,11 +25,11 @@ const FAST_TIMERS: &str = "fast-timers";
 
 /// Injected by the number keys and the dev tray items.
 #[tauri::command]
-pub fn dev_inject(app: AppHandle, state: State<Clawd>, action: String) {
-    run(&app, &state, &action);
+pub fn dev_inject(state: State<Clawd>, action: String) {
+    run(&state, &action);
 }
 
-fn run(app: &AppHandle, state: &Clawd, action: &str) {
+fn run(state: &Clawd, action: &str) {
     match action {
         // A realistic timed sequence, which is what surfaces ugly transitions
         // and label thrash (§8.2).
@@ -52,7 +52,7 @@ fn run(app: &AppHandle, state: &Clawd, action: &str) {
                 .lock()
                 .unwrap()
                 .set_timings(Timings::fast(), Instant::now());
-            log(app, "timers shrunk: long task 2s, success 2s, watchdog 6s");
+            log("timers shrunk: long task 2s, success 2s, watchdog 6s");
         }
 
         // A state name from the number keys. Note this asks for the *event*
@@ -62,12 +62,12 @@ fn run(app: &AppHandle, state: &Clawd, action: &str) {
             Some(state_name) => state
                 .source
                 .inject(mock::event_for_state(state_name, PRIMARY_SESSION)),
-            None => log(app, &format!("unknown dev action: {name}")),
+            None => log(&format!("unknown dev action: {name}")),
         },
     }
 }
 
-fn log(_app: &AppHandle, message: &str) {
+fn log(message: &str) {
     eprintln!("[clawd dev] {message}");
 }
 
@@ -100,6 +100,6 @@ pub fn menu_items(app: &AppHandle) -> tauri::Result<Vec<Box<dyn IsMenuItem<Wry>>
 
 pub fn handle_menu(app: &AppHandle, id: &str) {
     if let Some(state) = app.try_state::<Clawd>() {
-        run(app, &state, id);
+        run(&state, id);
     }
 }

@@ -17,17 +17,77 @@ Running, with the dev harness driving every state through the real pipeline:
 
 ## Status
 
-This is v1 of the implementation spec: the window, the state machine, the ten
-states, and a developer harness that drives all of them. **There is no real
-Claude Code integration yet** — that is deliberately its own spec. v1 ships
-`MockSource`, and the `SessionEvent` seam is built so `HookSource` drops in
-without the state machine ever learning that Claude Code exists.
+v1 was the window, the state machine, the ten states and a developer harness
+that drives all of them, with `MockSource` as the only event producer. v2 adds
+`HookSource`: Clawd now watches real Claude Code sessions through hooks.
 
-So in a release build the pet sits at `Idle / Ready`, because nothing is being
-observed. Run `npm run tauri:dev` and press `1`–`0` to see it work.
+The seam held. `HookSource` landed without a line of the state machine, the
+renderer or the pump changing — the machine still speaks only `SessionEvent`
+and still does not know that Claude Code exists. Everything Clawd understands
+about hooks is one translation table in `crates/clawd-core/src/hook.rs`.
+
+Run `npm run hooks:install`, start Clawd, and start a session anywhere.
 
 Platforms: **macOS and Windows**. Linux is out of scope and the reason is in
 [§2.1 of the spec](#why-not-linux).
+
+## Connecting it to Claude Code
+
+```sh
+npm run hooks:install     # merges into ~/.claude/settings.json, with a backup
+npm run hooks:uninstall
+```
+
+Claude Code's `http` hook type POSTs each event as JSON; Clawd listens on
+`127.0.0.1:8787/hook` and translates. That needs no shell script, which is the
+whole reason for it — a `command` hook would need one that works under both
+PowerShell and bash, and PowerShell startup is 150–400 ms paid twice per tool
+call. The bind is loopback only, so it raises no firewall prompt on either
+platform.
+
+`SessionStart` is the one exception: Claude Code refuses HTTP hooks for it,
+*silently*, so that one event is installed as a `command` hook that pipes the
+same body through `curl` (which ships on Windows 10 1803+ and on macOS). The
+installer handles this; it is only worth knowing if you write the config by
+hand.
+
+The installer merges: it finds or creates the matcher group for each event,
+drops any entry already pointing at Clawd's loopback endpoint, and appends a
+fresh one, so running it twice is the same as running it once and your own
+hooks are left alone. It matches on the endpoint rather than the exact URL, so
+entries still get removed after the port has changed. It backs the file up first, and if the file does not parse it refuses
+and writes nothing rather than round-tripping your comments away.
+
+| Hook event | Clawd shows |
+|---|---|
+| `SessionStart` | Idle / Ready |
+| `UserPromptSubmit` | Thinking |
+| `PreToolUse` | Running a tool — `Editing App.tsx`, `Running npm test` |
+| `PostToolUse` | Thinking |
+| `PostToolUseFailure` | Error — unless you pressed Esc, which reads as Waiting for input |
+| `PermissionRequest` | Needs permission — `Allow edit?` |
+| `Notification` (idle / needs input) | Waiting for input |
+| `Stop` | Done |
+| `StopFailure` | Error — `Rate limited`, `Overloaded`, `Auth failed`, … |
+| `PreCompact` / `PostCompact` | Compacting, then back to Thinking |
+| `SessionEnd` | Paused |
+
+Everything else Claude Code sends is understood and deliberately ignored — an
+unrecognised hook event is not an error, just something the pet has no pose for.
+
+The port is `8787` unless `CLAWD_HOOK_PORT` says otherwise. If it is already
+taken Clawd scans the next four and records what it bound in
+`hook-port.json` next to `positions.json`; re-run the installer and it will
+point the config at the right one.
+
+To scope Clawd to a single repo instead, put the same block in that project's
+`.claude/settings.json` — though a status pet that only watches one repo is not
+really a status pet.
+
+### Without Claude Code
+
+Nothing is being observed, so the pet sits at `Idle / Ready`. Run
+`npm run tauri:dev` and press `1`–`0` to see every state work.
 
 ## Running it
 
@@ -109,6 +169,20 @@ derivation, the scripted run end to end, and the DPI snap. The timers are
 tested by arithmetic rather than by sleeping, so the suite is fast and cannot
 flake.
 
+It also covers the hook translation table row by row, and replays realistic
+hook transcripts through the machine on an injected clock — an ordinary turn,
+a four-minute build that must not read as stalled, a genuinely dead session
+that must, three parallel subagents that must not reach the chip, and a
+compaction that must return to the turn rather than resetting it. That is the
+point of keeping translation in `clawd-core`: it is parsing, not I/O, so the
+whole of what Clawd knows about Claude Code is assertable on a box with no
+webview and no Claude Code installed.
+
+The listener itself is tested under `cargo test --manifest-path
+src-tauri/Cargo.toml` — a real socket, raw requests over `TcpStream`, and the
+refusal paths. Those need a platform webview to build, the same caveat that
+already applies to `src-tauri/src/platform/`.
+
 The shell was also run end to end under a virtual X server during development
 — every state driven by the real number keys, the long-task and success timers
 earned by the clock, a permission prompt held against five injections from a
@@ -123,6 +197,53 @@ wrote straight to the view would let the machine be wrong while every state
 still looked correct.
 
 ## Things worth knowing
+
+**What Clawd reads, and what it does not.** The hook payload struct names nine
+fields, and the tool input struct names the seven keys a label can come from.
+Serde discards everything else as it parses, so your prompts, Claude's replies,
+tool output, transcript paths and file contents are never retained — a `Write`'s
+`content` is skipped rather than allocated and then ignored. Two tests enforce
+it: one feeds `SECRET` through every dropped field and asserts it reaches
+neither the event nor the label, the other asserts it does not survive
+deserialization at all.
+
+**The field names came from the binary, not the docs.** The published hook
+reference names three fields Claude Code does not emit — `how_started` for
+`SessionStart`'s `source`, `error_type` for `StopFailure`'s `error`, and it
+omits `is_interrupt` entirely. A wrong field name here fails *silently*: serde
+leaves the `Option` as `None` and the label quietly falls back, so nothing
+errors and nothing logs. There are regression tests pinning the real names and
+asserting the wrong ones are not read.
+
+**Bash commands appear on screen.** A tool's target comes from whichever key
+its input uses, and for `Bash` that is `command` rather than `description` —
+because `Running npm test` is worth more than `Running the test suite`. The
+consequence is that a command line can show up on an always-on-top window
+during a screen share. Truncation at 30 characters limits it; reordering those
+two keys in `hook.rs` removes it, at the cost of the better label.
+
+**Tool failures flash red.** A failed tool call is a real failure and Clawd
+says so, but failures are routine — a `Grep` that matches nothing, a test suite
+exiting non-zero — and `Failed` is one of the sticky states. Expect the pet to
+go red and stay there until that session does something else. It is honest, and
+it is loud. Pressing Esc is excluded: an interrupt carries `is_interrupt`, and
+it reads as `Your turn` rather than as a failure, because you did it on purpose
+and control has come back to you.
+
+**Subagents are not shown.** They share their parent's session id, and
+ownership in the state machine is keyed on exactly that, so three parallel
+agents would be three unfiltered writers to one chip — and a subagent
+finishing would render `Done` while the main turn was still running. They are
+dropped in translation. Showing them properly means keying ownership on
+`(session, agent)`, which is a state-machine change rather than a translation
+one.
+
+**The watchdog is ten minutes, not two.** A busy state that goes quiet
+eventually reads as stopped, and two minutes was fine against a mock whose
+longest gap was thirteen seconds. Real hooks fire `PreToolUse` and then nothing
+at all until `PostToolUse`, so a build or a test suite is one long silence. Ten
+minutes is longer than any plausible single tool call and still short enough
+that a killed agent does not lie all afternoon.
 
 **The meter is elapsed time, not progress.** The prototype's six-block meter
 reads as a progress bar, and hooks carry no progress percentage. Rather than

@@ -91,7 +91,7 @@ fn a_silent_busy_session_drops_to_paused() {
     let mut m = Machine::new(Timings::default(), now);
     m.apply(&SessionEvent::new(S, tool()), now);
 
-    let snapshot = m.tick(now + Duration::from_secs(120)).expect("watchdog fired");
+    let snapshot = m.tick(now + Duration::from_secs(600)).expect("watchdog fired");
     assert_eq!(snapshot.state, ClawdState::Paused);
     assert_eq!(snapshot.label, "Session stalled");
 }
@@ -108,7 +108,7 @@ fn the_watchdog_covers_every_busy_state() {
         m.apply(&SessionEvent::new(S, kind), now);
         assert!(m.state().is_busy());
         assert_eq!(
-            m.tick(now + Duration::from_secs(121)).map(|s| s.state),
+            m.tick(now + Duration::from_secs(601)).map(|s| s.state),
             Some(ClawdState::Paused)
         );
     }
@@ -122,7 +122,7 @@ fn the_watchdog_leaves_blocking_states_alone() {
     let mut m = Machine::new(Timings::default(), now);
     m.apply(&SessionEvent::new(S, EventKind::PermissionRequested { action: None }), now);
 
-    assert!(m.tick(now + Duration::from_secs(600)).is_none());
+    assert!(m.tick(now + Duration::from_secs(900)).is_none());
     assert_eq!(m.state(), ClawdState::NeedsPermission);
 }
 
@@ -164,7 +164,7 @@ fn next_wakeup_reports_the_nearer_of_the_two_clocks() {
 
     m.tick(now + Duration::from_secs(10));
     // Long task has no deadline of its own; the watchdog is what remains.
-    assert_eq!(m.next_wakeup(), Some(now + Duration::from_secs(120)));
+    assert_eq!(m.next_wakeup(), Some(now + Duration::from_secs(600)));
 }
 
 /// `advance` is the shell's whole loop pass, so the orchestration decision is

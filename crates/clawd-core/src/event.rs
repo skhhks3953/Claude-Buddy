@@ -1,10 +1,9 @@
 //! Clawd's own event vocabulary.
 //!
-//! These are domain events, not hook events (§3.3). `HookSource` will one day
-//! translate `PreToolUse` into `ToolStarted`; the state machine never learns
-//! that Claude Code exists. That seam is what makes the integration swap a
-//! config change rather than a rewrite, and what lets the mock be a faithful
-//! stand-in.
+//! These are domain events, not hook events (§3.3). `hook::translate` turns
+//! `PreToolUse` into `ToolStarted`; the state machine never learns that Claude
+//! Code exists. That seam is what made the integration an additive change
+//! rather than a rewrite, and what lets the mock be a faithful stand-in.
 
 use std::time::Duration;
 

@@ -5,7 +5,7 @@
 //! panel that wrote straight to the view would let the state machine be wrong
 //! while every state still looked correct.
 
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{Receiver, Sender};
 use std::thread;
 use std::time::Duration;
 
@@ -67,9 +67,11 @@ impl EventSource for MockSource {
     }
 }
 
-/// Convenience channel pairing for the shell.
+/// Convenience channel pairing, kept for the tests that predate
+/// `source::channel`. The shell uses that one: production wiring has no
+/// business calling into a module named `mock`.
 pub fn channel() -> (Sender<SessionEvent>, Receiver<SessionEvent>) {
-    mpsc::channel()
+    crate::source::channel()
 }
 
 /// The event that puts Clawd directly into a given state, for keys 1-0 (§8.1).

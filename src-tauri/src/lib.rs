@@ -2,12 +2,13 @@
 //!
 //! Everything that has to survive the webview being occluded, throttled or
 //! suspended lives on this side: the state machine, the timers, the window,
-//! and the tray. React is a pure render target (§3).
+//! the tray, and the hook listener. React is a pure render target (§3).
 
 mod app_state;
 #[cfg(feature = "devtools")]
 mod dev;
 mod hit_test;
+mod hook;
 mod ipc;
 mod platform;
 mod position;
@@ -18,8 +19,9 @@ mod window;
 use std::time::Instant;
 
 use clawd_core::machine::Machine;
-use clawd_core::mock::{self, MockSource};
-use clawd_core::source::{EventSink, EventSource};
+#[cfg(feature = "devtools")]
+use clawd_core::mock::MockSource;
+use clawd_core::source::{self, EventSink, EventSource};
 use clawd_core::Timings;
 use tauri::{Manager, WindowEvent};
 
@@ -30,15 +32,41 @@ pub fn run() {
     let builder = tauri::Builder::default().setup(|app| {
         let handle = app.handle().clone();
 
-        // The adapter boundary (§3.1). v1 has one implementation; HookSource
-        // arrives with its own spec and changes nothing below this line.
-        let (tx, events) = mock::channel();
-        let mut source = MockSource::new();
-        source.start(EventSink::new(tx));
+        // The adapter boundary (§3.1). It held: `HookSource` landed without
+        // anything below this line changing.
+        //
+        // Both sources feed one channel, because `EventSink` is `Clone`. That
+        // beats a `Box<dyn EventSource>`, which the trait's `Send`-without-
+        // `Sync` bound would force behind a mutex that buys nothing.
+        let (tx, events) = source::channel();
+        let sink = EventSink::new(tx);
+
+        let mut hooks = hook::HookSource::new(hook::requested_port());
+        hooks.start(sink.clone());
+        match hooks.port() {
+            Some(port) => hook::save_port(&handle, port),
+            // Nothing is listening, so a stale hint file would send the
+            // installer at a port no one is on.
+            None => hook::clear_port(&handle),
+        }
+
+        #[cfg(feature = "devtools")]
+        let mock = {
+            let mut mock = MockSource::new();
+            mock.start(sink.clone());
+            mock
+        };
+
+        // The sources hold the live clones; this one has done its job.
+        drop(sink);
 
         let machine = Machine::new(Timings::default(), Instant::now());
         let positions = window::load_positions(&handle);
-        app.manage(Clawd::new(machine, source, positions));
+
+        #[cfg(feature = "devtools")]
+        app.manage(Clawd::new(machine, hooks, positions, mock));
+        #[cfg(not(feature = "devtools"))]
+        app.manage(Clawd::new(machine, hooks, positions));
 
         let window = window::create(&handle)?;
         window::place(&handle, &window);

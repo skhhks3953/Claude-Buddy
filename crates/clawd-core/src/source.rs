@@ -1,10 +1,11 @@
 //! The adapter boundary.
 //!
-//! v1 has one implementation, `MockSource`. `HookSource` arrives with its own
-//! spec (§10) and translates `PreToolUse` into `ToolStarted` without the state
-//! machine ever learning that Claude Code exists.
+//! Two implementations: `MockSource` for the dev harness, and the shell's
+//! `HookSource`, which translates `PreToolUse` into `ToolStarted` without the
+//! state machine ever learning that Claude Code exists. Both feed one channel
+//! — `EventSink` is `Clone` — so adding the second changed nothing here.
 
-use std::sync::mpsc::Sender;
+use std::sync::mpsc::{self, Receiver, Sender};
 
 use crate::event::SessionEvent;
 
@@ -42,6 +43,13 @@ pub trait EventSource: Send {
     fn actions(&self) -> Option<&dyn ActionChannel> {
         None
     }
+}
+
+/// The channel a source pushes into and the shell's pump pulls from.
+///
+/// Unbounded, so a source that starts before the pump does simply queues.
+pub fn channel() -> (Sender<SessionEvent>, Receiver<SessionEvent>) {
+    mpsc::channel()
 }
 
 /// Reserved for a later spec. Nothing in v1 implements it.

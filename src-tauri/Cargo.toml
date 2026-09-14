@@ -23,6 +23,11 @@ clawd-core = { path = "../crates/clawd-core" }
 tauri = { version = "2", features = ["tray-icon", "macos-private-api", "image-png"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# The hook listener (§10). Chosen over axum/hyper because the shell is plain
+# `std::thread` throughout and one endpoint does not justify an async runtime,
+# and over a hand-rolled TcpListener because getting chunked encoding or
+# `Expect: 100-continue` wrong drops events silently.
+tiny_http = { version = "0.12", default-features = false }
 
 # §6.2 — Tauri's always_on_top gives the floating window level and
 # set_visible_on_all_workspaces gives CanJoinAllSpaces, but neither sets

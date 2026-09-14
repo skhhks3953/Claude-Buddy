@@ -5,22 +5,29 @@ use std::sync::Mutex;
 
 use clawd_core::layout::Layout;
 use clawd_core::machine::Machine;
+#[cfg(feature = "devtools")]
 use clawd_core::mock::MockSource;
 
+use crate::hook::HookSource;
 use crate::position::PositionStore;
 
 pub struct Clawd {
     /// The state machine. Owned here rather than in the webview, which the OS
     /// is free to occlude, throttle or suspend (§3).
     pub machine: Mutex<Machine>,
-    /// The event source.
+    /// The hook listener, and so the only thing that observes Claude Code.
     ///
-    /// Nothing reads this in a release build, because v1 has no `HookSource`
-    /// and so nothing to inject — only the dev harness calls into it. It is
-    /// still not dead: the source owns the `EventSink`, and dropping it would
-    /// close the channel and end the pump thread.
-    #[cfg_attr(not(feature = "devtools"), allow(dead_code))]
-    pub source: MockSource,
+    /// Held here for its lifetime as much as for its API: the source owns an
+    /// `EventSink`, and dropping the last one closes the channel and ends the
+    /// pump thread. That lifetime is the whole reason it is a field, so
+    /// nothing reads it and nothing is expected to.
+    #[allow(dead_code)]
+    pub hooks: HookSource,
+    /// The dev harness's source. Absent from release binaries rather than
+    /// merely hidden (§8.3) — `hooks` now carries the channel, so there is no
+    /// longer a reason for this to survive into one.
+    #[cfg(feature = "devtools")]
+    pub mock: MockSource,
     pub positions: Mutex<PositionStore>,
     pub layout: Mutex<Layout>,
     /// Whether the window is currently accepting clicks (§6.1).
@@ -36,10 +43,32 @@ pub struct Clawd {
 }
 
 impl Clawd {
-    pub fn new(machine: Machine, source: MockSource, positions: PositionStore) -> Self {
+    #[cfg(feature = "devtools")]
+    pub fn new(
+        machine: Machine,
+        hooks: HookSource,
+        positions: PositionStore,
+        mock: MockSource,
+    ) -> Self {
+        Self {
+            mock,
+            ..Self::build(machine, hooks, positions)
+        }
+    }
+
+    #[cfg(not(feature = "devtools"))]
+    pub fn new(machine: Machine, hooks: HookSource, positions: PositionStore) -> Self {
+        Self::build(machine, hooks, positions)
+    }
+
+    /// Everything both constructors share. Split so the dev-only field is the
+    /// only difference between them.
+    fn build(machine: Machine, hooks: HookSource, positions: PositionStore) -> Self {
         Self {
             machine: Mutex::new(machine),
-            source,
+            hooks,
+            #[cfg(feature = "devtools")]
+            mock: MockSource::new(),
             positions: Mutex::new(positions),
             layout: Mutex::new(Layout::default()),
             // The window starts click-through; the poll turns it on when the

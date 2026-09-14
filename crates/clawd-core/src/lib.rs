@@ -6,6 +6,7 @@
 
 pub mod config;
 pub mod event;
+pub mod hook;
 pub mod label;
 pub mod layout;
 pub mod machine;
@@ -15,6 +16,7 @@ pub mod state;
 
 pub use config::Timings;
 pub use event::{EventKind, FailureKind, SessionEvent};
+pub use hook::{translate, HookPayload};
 pub use layout::{Layout, Rect};
 pub use machine::{Machine, Snapshot};
 pub use source::{EventSink, EventSource};

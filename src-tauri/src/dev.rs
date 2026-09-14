@@ -33,10 +33,10 @@ fn run(state: &Clawd, action: &str) {
     match action {
         // A realistic timed sequence, which is what surfaces ugly transitions
         // and label thrash (§8.2).
-        SCRIPT => state.source.play_script(),
+        SCRIPT => state.mock.play_script(),
 
         // Prove the stickiness of blocking states against a chatty neighbour.
-        SECOND => state.source.inject(SessionEvent::new(
+        SECOND => state.mock.inject(SessionEvent::new(
             SECOND_SESSION,
             EventKind::ToolStarted {
                 name: "Bash".into(),
@@ -60,7 +60,7 @@ fn run(state: &Clawd, action: &str) {
         // long-task pose arrives only when the timer says so.
         name => match ClawdState::parse(name) {
             Some(state_name) => state
-                .source
+                .mock
                 .inject(mock::event_for_state(state_name, PRIMARY_SESSION)),
             None => log(&format!("unknown dev action: {name}")),
         },

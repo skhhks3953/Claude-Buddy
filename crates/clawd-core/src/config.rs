@@ -22,7 +22,7 @@ impl Default for Timings {
         Self {
             long_task: Duration::from_secs(10),
             success_hold: Duration::from_secs(5),
-            stale: Duration::from_secs(120),
+            stale: Duration::from_secs(600),
         }
     }
 }

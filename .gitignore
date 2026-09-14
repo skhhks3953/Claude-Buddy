@@ -1,0 +1,9 @@
+node_modules/
+dist/
+target/
+src-tauri/target/
+src-tauri/gen/
+.DS_Store
+*.local
+.vite/
+# screenshots/ is committed: the README shows the ten states.

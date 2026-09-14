@@ -1,0 +1,41 @@
+/*
+ * Window-level layout. The figure's placement inside the window is the app's
+ * business; everything about how the pet is drawn is in renderer/clawd.css.
+ */
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  /* The window is transparent and has no shadow: Clawd sits on the desktop,
+     it does not float on a card. */
+  background: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+}
+
+.clawd-root {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  /* The window is deliberately larger than the sprite so the pulse ring, the
+     badge and the chip can overflow harmlessly (§6.1).
+
+     This offset is SPRITE_Y_RATIO in crates/clawd-core/src/layout.rs, from
+     which the shell derives the hit rectangle. Change one and you must change
+     the other, or clicks will land off the pet. */
+  padding-top: calc(0.45 * var(--clawd-size));
+}
+
+/* Only the body is grabbable; the rest of the window is click-through, which
+   the shell enforces natively. */
+.clawd-root .clawd {
+  cursor: grab;
+}
+.clawd-root .clawd.clawd--dragging {
+  cursor: grabbing;
+}

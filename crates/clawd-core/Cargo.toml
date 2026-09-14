@@ -1,0 +1,13 @@
+[package]
+name = "clawd-core"
+description = "Clawd's session state machine. Deliberately free of any Tauri or UI dependency."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+# Hook payloads are JSON. Parsing is not I/O, so the translation table stays
+# in this crate and stays testable without a webview (see `hook.rs`).
+serde_json.workspace = true

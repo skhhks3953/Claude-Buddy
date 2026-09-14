@@ -1,0 +1,58 @@
+# Its own workspace: the root workspace excludes this crate so `cargo test`
+# there runs the state machine on any box, with or without a platform webview.
+[workspace]
+
+[package]
+name = "clawd"
+description = "A pixel-art desktop status pet for Claude Code."
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+repository = "https://github.com/skhhks3953/Claude-Buddy"
+
+[lib]
+name = "clawd_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+clawd-core = { path = "../crates/clawd-core" }
+# macos-private-api is what makes a transparent window possible on macOS.
+tauri = { version = "2", features = ["tray-icon", "macos-private-api", "image-png"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# The hook listener (§10). Chosen over axum/hyper because the shell is plain
+# `std::thread` throughout and one endpoint does not justify an async runtime,
+# and over a hand-rolled TcpListener because getting chunked encoding or
+# `Expect: 100-continue` wrong drops events silently.
+tiny_http = { version = "0.12", default-features = false }
+
+# §6.2 — Tauri's always_on_top gives the floating window level and
+# set_visible_on_all_workspaces gives CanJoinAllSpaces, but neither sets
+# FullScreenAuxiliary, without which Clawd vanishes the moment the user
+# fullscreens their terminal. Versions match the ones tao already pulls in, so
+# nothing is duplicated.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", features = ["NSWindow", "NSResponder"] }
+
+# §6.3 — tao's skip_taskbar removes the taskbar button via ITaskbarList but
+# leaves the window in Alt-Tab. WS_EX_TOOLWINDOW is what takes the slot back.
+[target.'cfg(target_os = "windows")'.dependencies]
+windows-sys = { version = "0.60", features = [
+  "Win32_Foundation",
+  "Win32_UI_WindowsAndMessaging",
+] }
+
+[features]
+# The dev harness is absent from release binaries, not merely hidden (§8.3).
+devtools = []
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+strip = true
+panic = "abort"

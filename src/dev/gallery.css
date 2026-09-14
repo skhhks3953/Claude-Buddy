@@ -1,0 +1,108 @@
+/* Gallery chrome only. Nothing here touches how the pet is drawn. */
+
+body {
+  margin: 0;
+  background: #f4f0e6;
+  color: #1e1b16;
+  font-family: "IBM Plex Sans", system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+.gallery {
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 48px 32px 96px;
+}
+
+.gallery__header h1 {
+  margin: 0 0 10px;
+  font-family: "Pixelify Sans", ui-monospace, monospace;
+  font-size: 40px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.gallery__header p {
+  margin: 0 0 20px;
+  max-width: 58ch;
+  font-size: 15px;
+  line-height: 1.55;
+  color: #4a4437;
+}
+
+.gallery__controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 20px;
+  align-items: center;
+  padding: 14px 0 24px;
+  border-bottom: 2px solid #1e1b16;
+  font-size: 13px;
+  color: #4a4437;
+}
+.gallery__controls label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* The stage carries .clawd-root, so the reduced-motion and occlusion rules in
+   clawd.css apply here exactly as they do in the pet window. */
+.gallery__stage {
+  position: static;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(248px, 1fr));
+  padding-top: 28px;
+  gap: 0;
+}
+
+.gallery__cell {
+  background: #fcfaf5;
+  border: 1px solid #dcd3c1;
+  margin: -0.5px;
+  padding: 20px 18px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: center;
+}
+
+.gallery__index {
+  display: flex;
+  justify-content: space-between;
+  font-family: "Pixelify Sans", ui-monospace, monospace;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  color: #6f6757;
+}
+.gallery__key { color: #b4562f }
+
+/* Generous, fixed room so a hop, a nudge and a pulse ring never reflow the
+   grid or clip against a neighbour. */
+.gallery__pet {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: calc(var(--clawd-size) * 2.1);
+  /* A desktop-ish ground: the chip is designed to sit on a wallpaper, not on
+     paper. */
+  background: var(--ground, linear-gradient(160deg, #3a2b22, #1b1512 62%, #241a15));
+  border: 1px solid #cfc5b0;
+  padding: calc(var(--clawd-size) * 0.22) 8px;
+}
+
+.gallery__cell h3 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.gallery__cell p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #6b6454;
+}
+
+.gallery__cell--light .gallery__pet {
+  --ground: linear-gradient(160deg, #e9e2d2, #cfc7b4 62%, #ded6c4);
+}

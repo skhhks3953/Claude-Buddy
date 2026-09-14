@@ -22,6 +22,13 @@ pub struct SavedPosition {
 pub struct PositionStore {
     /// Keyed on monitor identity, so each display remembers its own spot.
     monitors: BTreeMap<String, SavedPosition>,
+    /// The display the pet was last left on.
+    ///
+    /// Without this, startup takes whichever monitor enumerates first and has
+    /// any saved entry — so once two displays are remembered, dragging to the
+    /// second one is undone on every launch.
+    #[serde(default)]
+    last_used: Option<String>,
 }
 
 /// Which corner to snap to, from the tray menu.
@@ -78,17 +85,20 @@ impl PositionStore {
     }
 
     pub fn remember(&mut self, monitor: &Monitor, position: PhysicalPosition<i32>) {
+        let key = monitor_key(monitor);
         self.monitors.insert(
-            monitor_key(monitor),
+            key.clone(),
             SavedPosition {
                 x: position.x,
                 y: position.y,
             },
         );
+        self.last_used = Some(key);
     }
 
     pub fn forget_all(&mut self) {
         self.monitors.clear();
+        self.last_used = None;
     }
 
     pub fn get(&self, monitor: &Monitor) -> Option<SavedPosition> {
@@ -96,25 +106,53 @@ impl PositionStore {
     }
 }
 
-/// Where the window should open.
+/// Which display the window should open on, and where.
 ///
-/// Prefers a remembered spot on a monitor that still exists; otherwise the
-/// default corner of the primary display. A remembered position is always
-/// clamped back into visible bounds, so a display that shrank or a window that
-/// was dragged mostly off-screen does not strand the pet.
-pub fn startup_position(
+/// The monitor is chosen *before* the layout is built, because the DPI snap
+/// depends on that monitor's scale factor and the clamp depends on the size
+/// the snap produces. Deriving the layout from the primary display and then
+/// clamping a position saved on a 2x secondary is how the pet ends up half
+/// off-screen on every launch.
+pub struct Placement<'a> {
+    pub monitor: &'a Monitor,
+    /// `None` means nothing is remembered for this display: use the corner.
+    pub saved: Option<SavedPosition>,
+}
+
+/// Prefers the display the pet was last left on, then any other remembered
+/// one, then the primary. A remembered display that is gone falls through.
+pub fn startup_placement<'a>(
     store: &PositionStore,
-    monitors: &[Monitor],
-    primary: Option<&Monitor>,
-    layout: &Layout,
-) -> Option<PhysicalPosition<i32>> {
-    for monitor in monitors {
-        if let Some(saved) = store.get(monitor) {
-            return Some(clamp_to(monitor, layout, saved.x, saved.y));
+    monitors: &'a [Monitor],
+    primary: Option<&'a Monitor>,
+) -> Option<Placement<'a>> {
+    let last_used = store
+        .last_used
+        .as_deref()
+        .and_then(|key| monitors.iter().find(|m| monitor_key(m) == key));
+
+    if let Some(monitor) = last_used.or_else(|| monitors.iter().find(|m| store.get(m).is_some())) {
+        return Some(Placement {
+            saved: store.get(monitor),
+            monitor,
+        });
+    }
+
+    Some(Placement {
+        monitor: primary.or_else(|| monitors.first())?,
+        saved: None,
+    })
+}
+
+impl Placement<'_> {
+    /// Resolve to an actual position, clamped into visible bounds so a display
+    /// that shrank, or a pet dragged mostly off-screen, does not strand it.
+    pub fn resolve(&self, layout: &Layout) -> PhysicalPosition<i32> {
+        match self.saved {
+            Some(saved) => clamp_to(self.monitor, layout, saved.x, saved.y),
+            None => corner_of(self.monitor, layout, Corner::BottomRight),
         }
     }
-    let monitor = primary.or_else(|| monitors.first())?;
-    Some(corner_of(monitor, layout, Corner::BottomRight))
 }
 
 /// Clamp a position so the whole window stays inside a monitor's work area.

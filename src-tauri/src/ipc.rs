@@ -77,12 +77,18 @@ pub fn move_window(window: WebviewWindow, state: State<Clawd>, dx: f64, dy: f64)
     let _ = window.set_position(PhysicalPosition::new(current.x + step_x, current.y + step_y));
 }
 
-/// The drag ended: clamp back into visible bounds, persist per display, and
-/// re-run the DPI snap in case the pet crossed onto a different monitor.
+/// The drag ended: re-run the DPI snap, clamp back into visible bounds, and
+/// persist per display.
 #[tauri::command]
 pub fn drag_finished(app: AppHandle, window: WebviewWindow, state: State<Clawd>) {
     state.set_dragging(false);
     *state.drag_residual.lock().unwrap() = (0.0, 0.0);
+
+    // The snap has to come first. It resizes the window for whatever display
+    // the pet was dropped on, and clamping against the old size would let a
+    // drop onto a higher-DPI monitor leave the window hanging off the work
+    // area — which `remember_position` would then persist.
+    window::apply_layout(&app, &window);
 
     if let (Some(monitor), Ok(position)) = (position::monitor_for(&window), window.outer_position())
     {
@@ -93,6 +99,5 @@ pub fn drag_finished(app: AppHandle, window: WebviewWindow, state: State<Clawd>)
         }
     }
 
-    window::apply_layout(&app, &window);
     window::remember_position(&app, &window);
 }

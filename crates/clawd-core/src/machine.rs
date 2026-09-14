@@ -100,6 +100,21 @@ impl Machine {
         self.transition(next, label, now)
     }
 
+    /// One pass of the shell's loop: deliver an event if one arrived, and
+    /// advance the timers either way.
+    ///
+    /// Both, never one or the other: a loop that did one *or* the other would
+    /// stop advancing the clock entirely whenever the source emitted faster
+    /// than the tick interval. Today that starvation is not reachable — every
+    /// accepted event re-arms or clears the deadline, and events are only
+    /// rejected in blocking states, which carry no deadline — so this is
+    /// defensive rather than a live fix. When both produce a snapshot the
+    /// tick's is the later state, so it wins.
+    pub fn advance(&mut self, event: Option<&SessionEvent>, now: Instant) -> Option<Snapshot> {
+        let from_event = event.and_then(|event| self.apply(event, now));
+        self.tick(now).or(from_event)
+    }
+
     /// Advance the timers. Called on a low-frequency tick from the shell.
     pub fn tick(&mut self, now: Instant) -> Option<Snapshot> {
         // The watchdog outranks the state deadlines: if the session has gone

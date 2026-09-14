@@ -33,16 +33,34 @@ export default function App() {
   });
 
   useEffect(() => {
-    const subscriptions = [
-      bridge.onSnapshot(setSnapshot),
-      bridge.onLayout(({ spriteSize }) => setSpriteSize(spriteSize)),
-      bridge.onOcclusion(setWindowOccluded),
-    ];
-    // Ask for the current state rather than waiting for the next change —
-    // the window can be reloaded mid-session.
-    void bridge.hello();
+    let disposed = false;
+    let unlisten: Array<() => void> = [];
+
+    void (async () => {
+      // The listeners must be registered *before* hello is sent. Tauri gives
+      // no ordering guarantee between concurrent invokes, so firing hello
+      // alongside the pending registrations can land its reply with nothing
+      // listening — leaving the pet showing idle/Ready at 80px after a
+      // mid-session reload, which is the exact case hello exists for.
+      const registered = await Promise.all([
+        bridge.onSnapshot(setSnapshot),
+        bridge.onLayout(({ spriteSize }) => setSpriteSize(spriteSize)),
+        bridge.onOcclusion(setWindowOccluded),
+      ]);
+
+      if (disposed) {
+        for (const off of registered) off();
+        return;
+      }
+      unlisten = registered;
+
+      // Ask for the current state rather than waiting for the next change.
+      await bridge.hello();
+    })();
+
     return () => {
-      for (const s of subscriptions) void s.then((off) => off());
+      disposed = true;
+      for (const off of unlisten) off();
     };
   }, []);
 

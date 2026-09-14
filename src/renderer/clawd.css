@@ -362,6 +362,12 @@
   line-height: 1.15;
   color: #f6ecdd;
   white-space: nowrap;
+  /* The window is 2.75 sprites wide and clips anything past it, so a long
+     label would otherwise be cut off at both ends with no ellipsis. Labels are
+     capped at the source too; this is the backstop. */
+  max-width: calc(var(--clawd-size) * 2.45);
+  overflow: hidden;
+  text-overflow: ellipsis;
   /* Slide in, fade out. Transform and opacity only, so the chip costs nothing
      on the main thread while it is hiding. */
   opacity: 0;

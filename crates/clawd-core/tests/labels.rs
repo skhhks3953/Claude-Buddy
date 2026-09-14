@@ -96,3 +96,59 @@ fn no_label_can_claim_progress_it_does_not_have() {
         );
     }
 }
+
+/// The chip is one line in a window 2.75 sprites wide. A Bash description can
+/// be a whole command line, and uncapped it was clipped at both ends with no
+/// ellipsis to say so.
+#[test]
+fn long_labels_are_capped_with_an_ellipsis() {
+    let long = tool(
+        "Bash",
+        Some("npm run test:integration -- --runInBand --detectOpenHandles"),
+    );
+    assert!(
+        long.chars().count() <= label::MAX_CHARS,
+        "label was {} chars: {long}",
+        long.chars().count()
+    );
+    assert!(long.ends_with('…'), "no ellipsis to show it was cut: {long}");
+}
+
+#[test]
+fn a_label_that_fits_is_left_alone() {
+    let short = tool("Bash", Some("npm test"));
+    assert_eq!(short, "Running npm test");
+    assert!(!short.ends_with('…'));
+}
+
+/// Truncation must split on a character boundary, not a byte one.
+#[test]
+fn capping_does_not_split_multibyte_characters() {
+    let label = tool("Bash", Some(&"é".repeat(80)));
+    assert!(label.chars().count() <= label::MAX_CHARS);
+}
+
+/// Every label the vocabulary can produce has to fit the chip.
+#[test]
+fn no_event_can_produce_an_oversized_label() {
+    let monsters = [
+        EventKind::ToolStarted {
+            name: "A".repeat(90),
+            target: Some("B".repeat(90)),
+        },
+        EventKind::PermissionRequested {
+            action: Some("do something extraordinarily elaborate".into()),
+        },
+        EventKind::TurnFailed {
+            kind: Some(FailureKind::Other("x".repeat(120))),
+        },
+    ];
+    for kind in monsters {
+        let text = label::for_event(&kind);
+        assert!(
+            text.chars().count() <= label::MAX_CHARS,
+            "{kind:?} produced {} chars: {text}",
+            text.chars().count()
+        );
+    }
+}

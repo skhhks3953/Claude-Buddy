@@ -47,21 +47,23 @@ pub fn place(app: &AppHandle, window: &WebviewWindow) {
     let monitors = window.available_monitors().unwrap_or_default();
     let primary = window.primary_monitor().ok().flatten();
 
-    let scale = primary.as_ref().map(|m| m.scale_factor()).unwrap_or(1.0);
-    let layout = Layout::for_scale(scale);
-
     let position = {
         let state = app.state::<Clawd>();
         let store = state.positions.lock().unwrap();
-        position::startup_position(&store, &monitors, primary.as_ref(), &layout)
+        position::startup_placement(&store, &monitors, primary.as_ref()).map(|placement| {
+            // The layout comes from the display the pet is actually opening
+            // on, not from the primary one — the snapped window size is what
+            // the clamp is measured against.
+            let layout = Layout::for_scale(placement.monitor.scale_factor());
+            placement.resolve(&layout)
+        })
     };
 
     if let Some(position) = position {
         let _ = window.set_position(position);
     }
 
-    // Re-read the scale factor now the window is where it will live: the
-    // remembered spot may be on a different display from the primary one.
+    // Size the window for the display it landed on.
     apply_layout(app, window);
     let _ = window.show();
 

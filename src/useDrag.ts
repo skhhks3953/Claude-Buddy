@@ -16,7 +16,13 @@ export function useDrag() {
   const onPointerDown = useCallback((e: React.PointerEvent) => {
     if (e.button !== 0) return;
     e.preventDefault();
-    (e.target as Element).setPointerCapture(e.pointerId);
+    // Capture on currentTarget, never on target. `target` is whatever pixel is
+    // under the cursor, and most of the sprite's parts are conditional on
+    // state — the paws exist only while working, the ring only in three
+    // states, the meter only on a long task. A state change mid-drag unmounts
+    // the captured node, capture is silently lost, and if the pointerup then
+    // lands outside the window the shell never hears that the drag ended.
+    e.currentTarget.setPointerCapture(e.pointerId);
     last.current = { x: e.screenX, y: e.screenY };
     setDragging(true);
   }, []);
@@ -33,17 +39,35 @@ export function useDrag() {
     [dragging],
   );
 
+  const endDrag = useCallback(() => {
+    if (!dragging) return;
+    setDragging(false);
+    // The shell persists the position per display and re-runs the DPI snap,
+    // in case the pet crossed onto a monitor with a different scale factor.
+    // It also clears its own dragging flag, which suspends the cursor poll —
+    // so failing to send this leaves the window stuck swallowing every click
+    // on the desktop beneath it.
+    void bridge.dragFinished();
+  }, [dragging]);
+
   const onPointerUp = useCallback(
     (e: React.PointerEvent) => {
       if (!dragging) return;
-      (e.target as Element).releasePointerCapture?.(e.pointerId);
-      setDragging(false);
-      // The shell persists the position per display and re-runs the DPI snap,
-      // in case the pet crossed onto a monitor with a different scale factor.
-      void bridge.dragFinished();
+      e.currentTarget.releasePointerCapture?.(e.pointerId);
+      endDrag();
     },
-    [dragging],
+    [dragging, endDrag],
   );
 
-  return { dragging, handlers: { onPointerDown, onPointerMove, onPointerUp, onPointerCancel: onPointerUp } };
+  return {
+    dragging,
+    handlers: {
+      onPointerDown,
+      onPointerMove,
+      onPointerUp,
+      onPointerCancel: onPointerUp,
+      // The backstop: whatever else loses the capture, the drag still ends.
+      onLostPointerCapture: endDrag,
+    },
+  };
 }

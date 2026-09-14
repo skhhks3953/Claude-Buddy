@@ -166,3 +166,26 @@ fn next_wakeup_reports_the_nearer_of_the_two_clocks() {
     // Long task has no deadline of its own; the watchdog is what remains.
     assert_eq!(m.next_wakeup(), Some(now + Duration::from_secs(120)));
 }
+
+/// `advance` is the shell's whole loop pass, so the orchestration decision is
+/// testable here rather than buried in the untested shell.
+///
+/// Note on reach: today every *accepted* event re-arms or clears the deadline,
+/// and events are only rejected in blocking states, which carry no deadline —
+/// so a pass where both the event and a timer fire is not currently
+/// constructible. Doing both is defensive: the moment a timer applies to a
+/// state that can also receive a rejected event, one-or-the-other would
+/// silently stop advancing the clock.
+/// With no event, advance is exactly a tick.
+#[test]
+fn advance_with_no_event_still_promotes() {
+    let now = Instant::now();
+    let mut m = Machine::new(Timings::default(), now);
+    m.apply(&SessionEvent::new(S, tool()), now);
+
+    assert!(m.advance(None, now + Duration::from_secs(9)).is_none());
+    assert_eq!(
+        m.advance(None, now + Duration::from_secs(10)).map(|s| s.state),
+        Some(ClawdState::LongTask)
+    );
+}

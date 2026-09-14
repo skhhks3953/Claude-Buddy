@@ -28,11 +28,7 @@ pub fn spawn(app: AppHandle, events: Receiver<clawd_core::SessionEvent>) {
 
         let snapshot = {
             let mut machine = state.machine.lock().unwrap();
-            let now = Instant::now();
-            match &event {
-                Some(event) => machine.apply(event, now),
-                None => machine.tick(now),
-            }
+            machine.advance(event.as_ref(), Instant::now())
         };
 
         if let Some(snapshot) = snapshot {

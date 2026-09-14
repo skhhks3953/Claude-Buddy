@@ -8,6 +8,13 @@ use std::time::Duration;
 
 use crate::event::{EventKind, FailureKind};
 
+/// Longest a label may be, in characters.
+///
+/// The chip is one line in a window 2.75 sprites wide. A Bash description can
+/// be an entire command line, and an uncapped one is clipped at both ends with
+/// no ellipsis to say so. Sized to fit the chip at the default sprite size.
+pub const MAX_CHARS: usize = 30;
+
 pub const READY: &str = "Ready";
 pub const THINKING: &str = "Thinking…";
 pub const YOUR_TURN: &str = "Your turn";
@@ -19,6 +26,20 @@ pub const STALLED: &str = "Session stalled";
 
 /// Label for an event that has just been accepted.
 pub fn for_event(kind: &EventKind) -> String {
+    truncate(raw_for_event(kind))
+}
+
+/// Cap a label to `MAX_CHARS`, ending it with an ellipsis so the reader can
+/// see it was cut. Splits on a character boundary, never a byte one.
+fn truncate(text: String) -> String {
+    if text.chars().count() <= MAX_CHARS {
+        return text;
+    }
+    let kept: String = text.chars().take(MAX_CHARS - 1).collect();
+    format!("{}…", kept.trim_end())
+}
+
+fn raw_for_event(kind: &EventKind) -> String {
     match kind {
         EventKind::SessionStarted => READY.to_string(),
         EventKind::PromptSubmitted => THINKING.to_string(),

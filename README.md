@@ -45,10 +45,17 @@ PowerShell and bash, and PowerShell startup is 150–400 ms paid twice per tool
 call. The bind is loopback only, so it raises no firewall prompt on either
 platform.
 
+`SessionStart` is the one exception: Claude Code refuses HTTP hooks for it,
+*silently*, so that one event is installed as a `command` hook that pipes the
+same body through `curl` (which ships on Windows 10 1803+ and on macOS). The
+installer handles this; it is only worth knowing if you write the config by
+hand.
+
 The installer merges: it finds or creates the matcher group for each event,
-drops any entry already pointing at Clawd's URL, and appends a fresh one, so
-running it twice is the same as running it once and your own hooks are left
-alone. It backs the file up first, and if the file does not parse it refuses
+drops any entry already pointing at Clawd's loopback endpoint, and appends a
+fresh one, so running it twice is the same as running it once and your own
+hooks are left alone. It matches on the endpoint rather than the exact URL, so
+entries still get removed after the port has changed. It backs the file up first, and if the file does not parse it refuses
 and writes nothing rather than round-tripping your comments away.
 
 | Hook event | Clawd shows |
@@ -57,11 +64,11 @@ and writes nothing rather than round-tripping your comments away.
 | `UserPromptSubmit` | Thinking |
 | `PreToolUse` | Running a tool — `Editing App.tsx`, `Running npm test` |
 | `PostToolUse` | Thinking |
-| `PostToolUseFailure` | Error |
+| `PostToolUseFailure` | Error — unless you pressed Esc, which reads as Waiting for input |
 | `PermissionRequest` | Needs permission — `Allow edit?` |
 | `Notification` (idle / needs input) | Waiting for input |
 | `Stop` | Done |
-| `StopFailure` | Error, with the reason where there is one |
+| `StopFailure` | Error — `Rate limited`, `Overloaded`, `Auth failed`, … |
 | `PreCompact` / `PostCompact` | Compacting, then back to Thinking |
 | `SessionEnd` | Paused |
 
@@ -192,12 +199,21 @@ still looked correct.
 ## Things worth knowing
 
 **What Clawd reads, and what it does not.** The hook payload struct names nine
-fields: the event name, the session id, the agent id, the tool name and its
-input, the notification type, the error type, and how the session started.
-Serde drops everything else, so your prompts, Claude's replies, tool output,
-transcript paths and file contents never enter the process at all. A test feeds
-a payload with `SECRET` in every one of those and asserts it reaches neither the
-event nor the label.
+fields, and the tool input struct names the seven keys a label can come from.
+Serde discards everything else as it parses, so your prompts, Claude's replies,
+tool output, transcript paths and file contents are never retained — a `Write`'s
+`content` is skipped rather than allocated and then ignored. Two tests enforce
+it: one feeds `SECRET` through every dropped field and asserts it reaches
+neither the event nor the label, the other asserts it does not survive
+deserialization at all.
+
+**The field names came from the binary, not the docs.** The published hook
+reference names three fields Claude Code does not emit — `how_started` for
+`SessionStart`'s `source`, `error_type` for `StopFailure`'s `error`, and it
+omits `is_interrupt` entirely. A wrong field name here fails *silently*: serde
+leaves the `Option` as `None` and the label quietly falls back, so nothing
+errors and nothing logs. There are regression tests pinning the real names and
+asserting the wrong ones are not read.
 
 **Bash commands appear on screen.** A tool's target comes from whichever key
 its input uses, and for `Bash` that is `command` rather than `description` —
@@ -210,7 +226,9 @@ two keys in `hook.rs` removes it, at the cost of the better label.
 says so, but failures are routine — a `Grep` that matches nothing, a test suite
 exiting non-zero — and `Failed` is one of the sticky states. Expect the pet to
 go red and stay there until that session does something else. It is honest, and
-it is loud.
+it is loud. Pressing Esc is excluded: an interrupt carries `is_interrupt`, and
+it reads as `Your turn` rather than as a failure, because you did it on purpose
+and control has come back to you.
 
 **Subagents are not shown.** They share their parent's session id, and
 ownership in the state machine is keyed on exactly that, so three parallel

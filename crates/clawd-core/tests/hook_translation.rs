@@ -28,7 +28,7 @@ fn every_hook_event_lands_on_its_specified_kind() {
     let cases: Vec<(&str, EventKind)> = vec![
         (r#""hook_event_name":"SessionStart""#, EventKind::SessionStarted),
         (
-            r#""hook_event_name":"SessionStart","how_started":"resume""#,
+            r#""hook_event_name":"SessionStart","source":"resume""#,
             EventKind::SessionStarted,
         ),
         (
@@ -68,7 +68,7 @@ fn every_hook_event_lands_on_its_specified_kind() {
             EventKind::TurnFinished { duration: None },
         ),
         (
-            r#""hook_event_name":"StopFailure","error_type":"rate_limit""#,
+            r#""hook_event_name":"StopFailure","error":"rate_limit""#,
             EventKind::TurnFailed {
                 kind: Some(FailureKind::RateLimit),
             },
@@ -99,7 +99,7 @@ fn understood_but_not_an_event() {
         // A session resuming from a compaction is not a new session. It
         // arrives just after PostCompact, so SessionStarted here would drop
         // the pet to Idle mid-turn.
-        r#""hook_event_name":"SessionStart","how_started":"compact""#,
+        r#""hook_event_name":"SessionStart","source":"compact""#,
         // PermissionRequest covers this one and carries the tool name, so
         // emitting both would flip the chip between two labels.
         r#""hook_event_name":"Notification","notification_type":"permission_prompt""#,
@@ -252,7 +252,7 @@ fn every_stop_failure_reason_maps_or_falls_back() {
     ];
 
     for (error_type, expected) in cases {
-        let fields = format!(r#""hook_event_name":"StopFailure","error_type":"{error_type}""#);
+        let fields = format!(r#""hook_event_name":"StopFailure","error":"{error_type}""#);
         let EventKind::TurnFailed { kind } = kind(&fields).expect("a failure event") else {
             panic!("expected TurnFailed for {error_type}");
         };
@@ -266,7 +266,7 @@ fn every_stop_failure_reason_maps_or_falls_back() {
 #[test]
 fn timeout_and_cancelled_have_no_hook_that_reports_them() {
     for error_type in ["timeout", "cancelled", "timed_out"] {
-        let fields = format!(r#""hook_event_name":"StopFailure","error_type":"{error_type}""#);
+        let fields = format!(r#""hook_event_name":"StopFailure","error":"{error_type}""#);
         let EventKind::TurnFailed { kind } = kind(&fields).expect("a failure event") else {
             panic!("expected TurnFailed");
         };
@@ -427,4 +427,129 @@ fn no_hook_derived_label_outruns_the_chip() {
             text.chars().count()
         );
     }
+}
+
+// ---------------------------------------------------------------------------
+// Field-name regressions.
+//
+// These exist because the first version of this table was written from the
+// published hook reference, which names three fields the running binary does
+// not emit. Every test above still passed, because they fed back the same
+// invented names the code was reading. A wrong field name is invisible at
+// runtime — serde leaves the `Option` as `None` and the label quietly falls
+// back — so it has to be pinned from the outside, by asserting the *real*
+// name works and the wrong one does not.
+// ---------------------------------------------------------------------------
+
+/// `SessionStart` discriminates on `source`. The reference calls it
+/// `how_started`; no such field is emitted.
+#[test]
+fn the_session_start_discriminator_is_source() {
+    assert_eq!(
+        kind(r#""hook_event_name":"SessionStart","source":"compact""#),
+        None,
+        "a compaction restart must be filtered, which needs the real field"
+    );
+    // Reading the wrong field would make this None too, so assert the
+    // opposite case as well: with only the wrong name present, the guard must
+    // not fire, and the event must still arrive.
+    assert_eq!(
+        kind(r#""hook_event_name":"SessionStart","how_started":"compact""#),
+        Some(EventKind::SessionStarted),
+        "`how_started` is not a field Claude Code emits and must not be read"
+    );
+}
+
+/// `StopFailure` carries `error`. The reference calls it `error_type`.
+#[test]
+fn the_stop_failure_reason_comes_from_error() {
+    let EventKind::TurnFailed { kind: real } =
+        kind(r#""hook_event_name":"StopFailure","error":"rate_limit""#).expect("an event")
+    else {
+        panic!("expected TurnFailed");
+    };
+    assert_eq!(real, Some(FailureKind::RateLimit));
+
+    let EventKind::TurnFailed { kind: wrong } =
+        kind(r#""hook_event_name":"StopFailure","error_type":"rate_limit""#).expect("an event")
+    else {
+        panic!("expected TurnFailed");
+    };
+    assert_eq!(
+        wrong, None,
+        "`error_type` is not a field Claude Code emits and must not be read"
+    );
+}
+
+/// Every value of the real `error` enum, and what the chip says.
+#[test]
+fn the_whole_stop_failure_enum_is_covered() {
+    let cases: Vec<(&str, &str)> = vec![
+        ("rate_limit", "Rate limited"),
+        ("overloaded", "Overloaded"),
+        ("authentication_failed", "Auth failed"),
+        ("cloud_credential_error", "Auth failed"),
+        ("oauth_org_not_allowed", "Account problem"),
+        ("account_on_hold", "Account problem"),
+        ("billing_error", "Account problem"),
+        ("invalid_request", "Request rejected"),
+        ("model_not_found", "Request rejected"),
+        ("server_error", "Server error"),
+        ("max_output_tokens", "Output limit"),
+        ("unknown", "Turn failed"),
+    ];
+
+    for (error, expected) in cases {
+        let fields = format!(r#""hook_event_name":"StopFailure","error":"{error}""#);
+        let event = kind(&fields).expect("a failure event");
+        assert_eq!(label::for_event(&event), expected, "for {error}");
+    }
+}
+
+/// Pressing Esc posts `PostToolUseFailure` with `is_interrupt`. It is the user
+/// interrupting their own tool call, not a failure, and `Failed` is sticky —
+/// so a routine Esc must not paint the pet red and lock out other sessions.
+#[test]
+fn an_interrupted_tool_call_is_not_a_failure() {
+    assert_eq!(
+        kind(r#""hook_event_name":"PostToolUseFailure","is_interrupt":true,"error":"aborted""#),
+        Some(EventKind::AttentionNeeded),
+        "Esc hands control back, which is attention, not failure"
+    );
+    // A genuine failure still reads as one.
+    assert_eq!(
+        kind(r#""hook_event_name":"PostToolUseFailure","is_interrupt":false,"error":"exit 1""#),
+        Some(EventKind::ToolFailed {
+            kind: Some(FailureKind::ToolError)
+        })
+    );
+}
+
+/// A target key holding something other than a string must cost that key, not
+/// the whole payload — rejecting it would silently drop a state.
+#[test]
+fn a_non_string_target_key_does_not_sink_the_payload() {
+    let fields = r#""hook_event_name":"PreToolUse","tool_name":"MultiEdit","tool_input":{"file_path":{"nested":true},"command":["a"],"path":"fallback.ts"}"#;
+    let EventKind::ToolStarted { target, .. } = kind(fields).expect("still an event") else {
+        panic!("expected ToolStarted");
+    };
+    assert_eq!(target.as_deref(), Some("fallback.ts"));
+}
+
+/// The privacy claim is about retention, so assert on the parsed payload
+/// rather than only on the event: a `Write`'s whole file must not survive
+/// deserialization at all.
+#[test]
+fn a_files_contents_are_never_retained() {
+    let body = br#"{
+        "hook_event_name": "PreToolUse",
+        "session_id": "s1",
+        "tool_name": "Write",
+        "tool_input": { "file_path": "notes.txt", "content": "SECRET", "edits": ["SECRET"] }
+    }"#;
+    let payload: clawd_core::HookPayload = serde_json::from_slice(body).expect("well-formed");
+    assert!(
+        !format!("{payload:?}").contains("SECRET"),
+        "file contents survived deserialization: {payload:?}"
+    );
 }

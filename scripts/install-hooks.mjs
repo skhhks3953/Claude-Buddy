@@ -5,9 +5,10 @@
  * Clawd observes Claude Code through hooks, and hooks are configured in a file
  * the user owns and has their own entries in. So this merges rather than
  * writes: it finds or creates the matcher group for each event, drops any
- * entry pointing at Clawd's URL, and appends a fresh one. Identity is the URL,
- * which makes it idempotent without adding a marker key Claude Code's schema
- * validator has never heard of.
+ * entry pointing at Clawd's loopback endpoint, and appends a fresh one.
+ * Identity is that endpoint, which makes it idempotent across a port change
+ * without adding a marker key Claude Code's schema validator has never heard
+ * of.
  *
  *   npm run hooks:install
  *   npm run hooks:uninstall
@@ -21,10 +22,41 @@ import process from "node:process";
 const DEFAULT_PORT = 8787;
 
 /**
- * The events Clawd listens for.
+ * `SessionStart` is the one event that cannot use an HTTP hook.
  *
- * `SessionStart` is registered with no matcher and filtered in the translator
- * instead: a session resuming from a compaction must not reset the pet, and
+ * Claude Code refuses them for `SessionStart` and `Setup` specifically, and it
+ * does so silently — the entry is filtered out at match time with a debug
+ * line, so an `http` entry here looks installed and simply never fires. It
+ * gets a `command` hook posting the same body with curl instead, which ships
+ * on Windows 10 1803+ and on macOS. Exec form, so no shell is involved.
+ *
+ * The response body is `{}`, which a command hook reads as valid hook output
+ * expressing no opinion, so letting curl write it to stdout is harmless.
+ */
+const curlEntry = (url) => ({
+  type: "command",
+  command: "curl",
+  args: [
+    "-s",
+    "-m",
+    "2",
+    "-X",
+    "POST",
+    "-H",
+    "Content-Type: application/json",
+    "--data-binary",
+    "@-",
+    url,
+  ],
+  timeout: TIMEOUT_SECONDS,
+});
+
+/**
+ * The events Clawd listens for, minus `SessionStart`, which is added
+ * separately because it needs the other transport.
+ *
+ * All of them register with no matcher and are filtered in the translator
+ * instead — a session resuming from a compaction must not reset the pet, and
  * that rule is worth a unit test rather than a matcher regex.
  *
  * Tool events use `"*"` because the pet shows every tool, not a chosen few.
@@ -36,7 +68,6 @@ const TOOL_EVENTS = [
   "PermissionRequest",
 ];
 const PLAIN_EVENTS = [
-  "SessionStart",
   "UserPromptSubmit",
   "Notification",
   "Stop",
@@ -122,17 +153,33 @@ function backup(text) {
   return path;
 }
 
-const isClawd = (entry, url) => entry && entry.type === "http" && entry.url === url;
+/**
+ * Is this one of ours?
+ *
+ * Matched on the loopback `/hook` endpoint rather than on the exact URL,
+ * because the port can change: install while 8787 is taken and Clawd binds
+ * 8788, and an exact-URL match would then fail to find the entry it wrote,
+ * leaving twelve dead hooks in the user's global settings with no way to
+ * remove them but by hand. Covers both transports.
+ */
+function isClawd(entry) {
+  if (!entry) return false;
+  const target = entry.type === "http" ? entry.url : (entry.args ?? []).join(" ");
+  return (
+    typeof target === "string" &&
+    /https?:\/\/(127\.0\.0\.1|localhost):\d+\/hook\b/.test(target)
+  );
+}
 
 /** Drop every Clawd entry, and every group left empty by doing so. */
-function removeClawd(hooks, url) {
+function removeClawd(hooks) {
   let removed = 0;
   for (const event of Object.keys(hooks)) {
     if (!Array.isArray(hooks[event])) continue;
     for (const group of hooks[event]) {
       if (!group || !Array.isArray(group.hooks)) continue;
       const before = group.hooks.length;
-      group.hooks = group.hooks.filter((entry) => !isClawd(entry, url));
+      group.hooks = group.hooks.filter((entry) => !isClawd(entry));
       removed += before - group.hooks.length;
     }
     // A group we emptied was ours; one that was already empty is not our
@@ -146,12 +193,14 @@ function removeClawd(hooks, url) {
 }
 
 function addClawd(hooks, url) {
-  const entry = { type: "http", url, timeout: TIMEOUT_SECONDS };
+  const http = { type: "http", url, timeout: TIMEOUT_SECONDS };
 
   for (const [event, matcher] of [
     ...TOOL_EVENTS.map((e) => [e, "*"]),
     ...PLAIN_EVENTS.map((e) => [e, undefined]),
+    ["SessionStart", undefined],
   ]) {
+    const entry = event === "SessionStart" ? curlEntry(url) : http;
     if (!Array.isArray(hooks[event])) hooks[event] = [];
     // Join the group whose matcher already matches, rather than adding a
     // second one beside an identical matcher.
@@ -183,7 +232,7 @@ function main() {
   }
 
   // Always clear first, so installing twice does not leave two copies.
-  const removed = removeClawd(settings.hooks, url);
+  const removed = removeClawd(settings.hooks);
   if (!uninstall) addClawd(settings.hooks, url);
   if (Object.keys(settings.hooks).length === 0) delete settings.hooks;
 
@@ -196,7 +245,7 @@ function main() {
   mkdirSync(dirname(settingsPath), { recursive: true });
   writeFileSync(settingsPath, `${JSON.stringify(settings, null, 2)}\n`, "utf8");
 
-  const events = TOOL_EVENTS.length + PLAIN_EVENTS.length;
+  const events = TOOL_EVENTS.length + PLAIN_EVENTS.length + 1;
   console.log(
     uninstall
       ? `\n  Removed ${removed} Clawd hook ${removed === 1 ? "entry" : "entries"}.`

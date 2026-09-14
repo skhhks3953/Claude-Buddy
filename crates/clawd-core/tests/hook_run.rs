@@ -64,7 +64,7 @@ fn labels(run: &[(Duration, Snapshot)]) -> Vec<String> {
 fn an_ordinary_turn_reads_the_way_it_should() {
     let run = replay(
         vec![
-            at(0, r#""SessionStart","how_started":"startup""#),
+            at(0, r#""SessionStart","source":"startup""#),
             at(1, r#""UserPromptSubmit""#),
             at(2, r#""PreToolUse","tool_name":"Read","tool_input":{"file_path":"src/App.tsx"}"#),
             at(3, r#""PostToolUse","tool_name":"Read""#),
@@ -223,7 +223,7 @@ fn compaction_returns_to_the_turn_rather_than_resetting_it() {
             at(0, r#""UserPromptSubmit""#),
             at(1, r#""PreCompact","trigger":"auto""#),
             at(4, r#""PostCompact","trigger":"auto""#),
-            at(4, r#""SessionStart","how_started":"compact""#),
+            at(4, r#""SessionStart","source":"compact""#),
             at(5, r#""PreToolUse","tool_name":"Edit","tool_input":{"file_path":"a.ts"}"#),
         ],
         Duration::from_secs(2),

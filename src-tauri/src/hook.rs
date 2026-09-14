@@ -34,8 +34,12 @@ const PORT_SCAN: u16 = 4;
 ///
 /// A `Write` tool call carries the whole file it is writing, so multi-megabyte
 /// payloads are ordinary traffic here rather than an attack. The cap exists so
-/// a runaway body cannot be read into memory without bound.
-const MAX_BODY: u64 = 1024 * 1024;
+/// a runaway body cannot be read into memory without bound — it is a ceiling,
+/// not a budget, and is set high enough that no real edit reaches it. A body
+/// that does reach it is dropped as oversized, never counted as malformed:
+/// truncating JSON at a byte boundary and then blaming the sender for bad
+/// syntax would turn a size limit into a lie.
+const MAX_BODY: u64 = 16 * 1024 * 1024;
 
 /// Workers sharing the listener. More than one because a single handler can be
 /// stalled by one slow client mid-body, and parked threads cost nothing.
@@ -57,6 +61,12 @@ pub struct HookSource {
     running: Arc<AtomicBool>,
     /// Bodies that were not hook payloads. Only ever surfaced under devtools.
     malformed: Arc<AtomicU64>,
+    /// Held even when the bind failed and there are no workers to hold it.
+    ///
+    /// The last `EventSink` closing the channel ends the pump thread, and the
+    /// machine would then never advance again for the life of the process —
+    /// so a Clawd that could not open its socket would also stop keeping time.
+    _sink: Option<EventSink>,
 }
 
 impl HookSource {
@@ -67,6 +77,7 @@ impl HookSource {
             workers: Vec::new(),
             running: Arc::new(AtomicBool::new(true)),
             malformed: Arc::new(AtomicU64::new(0)),
+            _sink: None,
         }
     }
 
@@ -81,6 +92,10 @@ impl HookSource {
 
 impl EventSource for HookSource {
     fn start(&mut self, sink: EventSink) {
+        // Keep the sink whatever happens below: dropping the last one closes
+        // the channel and ends the pump.
+        self._sink = Some(sink.clone());
+
         let Some(server) = bind(self.requested_port) else {
             // Clawd runs perfectly well with no listener; it simply never
             // leaves Idle. A second instance must not crash the first, and a
@@ -88,20 +103,29 @@ impl EventSource for HookSource {
             log(&format!(
                 "no hook listener: ports {}-{} are all in use",
                 self.requested_port,
-                self.requested_port + PORT_SCAN
+                self.requested_port.saturating_add(PORT_SCAN)
             ));
             return;
         };
 
         let server = Arc::new(server);
+        let bound = server
+            .server_addr()
+            .to_ip()
+            .map(|a| a.port())
+            .unwrap_or_default();
         log(&format!(
-            "listening for Claude Code hooks on http://127.0.0.1:{}/hook",
-            server
-                .server_addr()
-                .to_ip()
-                .map(|a| a.port())
-                .unwrap_or_default()
+            "listening for Claude Code hooks on http://127.0.0.1:{bound}/hook"
         ));
+        if bound != self.requested_port {
+            // Worth saying loudly. Whatever already owns the requested port is
+            // now receiving Claude Code's hook payloads — which carry prompts
+            // and tool inputs — until the config is pointed here instead.
+            log(&format!(
+                "WARNING: port {} was taken, so hooks configured for it are                  going to whatever owns it. Re-run `npm run hooks:install`.",
+                self.requested_port
+            ));
+        }
 
         for _ in 0..WORKERS {
             let server = server.clone();
@@ -153,9 +177,16 @@ fn serve(server: &Server, sink: &EventSink, running: &AtomicBool, malformed: &At
             Ok(Some(request)) => handle(request, sink, running, malformed),
             // Parked out; loop round and re-read the flag.
             Ok(None) => {}
-            // Unblocked, or the listener died. Either way there is nothing
-            // left to serve.
-            Err(_) => return,
+            // Unblocked, or the listener hit an accept error it cannot
+            // recover from (descriptor exhaustion, say). Say so: a worker
+            // that retires quietly leaves Clawd looking healthy while it
+            // observes less and less.
+            Err(error) => {
+                if running.load(Ordering::Relaxed) {
+                    log(&format!("hook worker stopped: {error}"));
+                }
+                return;
+            }
         }
     }
 }
@@ -179,13 +210,19 @@ fn handle(mut request: Request, sink: &EventSink, running: &AtomicBool, malforme
         .take(MAX_BODY)
         .read_to_end(&mut body)
         .is_ok();
+    // A chunked body has no `Content-Length` to check up front, so the only
+    // sign it was too big is that the reader stopped exactly at the cap.
+    let truncated = body.len() as u64 >= MAX_BODY;
 
     // Answer before doing anything with the bytes. Clawd is an observer, and
     // an observer that can delay a turn is not free. Always 200, never a
     // status a hook runner could read as a blocking error.
     let _ = request.respond(ok());
 
-    if !read || !running.load(Ordering::Relaxed) {
+    if !read || truncated || !running.load(Ordering::Relaxed) {
+        if truncated {
+            log(&format!("dropped an oversized hook body (>{MAX_BODY} bytes)"));
+        }
         return;
     }
 

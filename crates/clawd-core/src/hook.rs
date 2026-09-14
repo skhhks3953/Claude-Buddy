@@ -8,13 +8,19 @@
 //! the table is assertable by `cargo test` at the workspace root, on a box with
 //! no webview and no Claude Code installed.
 //!
-//! **What is read, and what is not.** The payload struct names the nine fields
-//! Clawd needs. Serde drops everything else, so prompts, assistant messages,
-//! tool output, transcript paths and file contents never enter the process at
-//! all. That is enforced by a test, not merely intended.
+//! **The field names here are the ones the running Claude Code binary emits**,
+//! which are not in every case the ones its published reference lists. Where
+//! the two disagree the binary wins, and the disagreements are noted inline —
+//! an integration built on a field that does not exist fails silently, because
+//! serde simply leaves the `Option` as `None` and every label falls back.
+//!
+//! **What is read, and what is not.** The payload struct names the fields
+//! Clawd needs and `ToolInput` names the seven keys a target can come from.
+//! Serde discards everything else as it parses, so prompts, assistant
+//! messages, tool output, transcript paths and file contents are never
+//! retained. That is enforced by a test, not merely intended.
 
 use serde::Deserialize;
-use serde_json::Value;
 
 use crate::event::{EventKind, FailureKind, SessionEvent};
 
@@ -24,22 +30,6 @@ use crate::event::{EventKind, FailureKind, SessionEvent};
 /// carrying a whole command line through the channel and the IPC boundary to
 /// be thrown away at the far end.
 const MAX_TARGET: usize = 120;
-
-/// The keys a tool's input might carry its subject under, most specific first.
-///
-/// Order settles the collisions: `Bash` has both `command` and `description`
-/// and wants the command, giving `Running npm test` (§5.1); `Write` has both
-/// `file_path` and `content` and must never reach `content`; `Grep` has
-/// `pattern` and `path`.
-const TARGET_KEYS: [&str; 7] = [
-    "file_path",
-    "notebook_path",
-    "command",
-    "pattern",
-    "url",
-    "description",
-    "path",
-];
 
 /// A Claude Code hook payload, in the only fields Clawd reads.
 ///
@@ -59,13 +49,87 @@ pub struct HookPayload {
     #[serde(default)]
     pub tool_name: Option<String>,
     #[serde(default)]
-    pub tool_input: Option<Value>,
+    pub tool_input: Option<ToolInput>,
     #[serde(default)]
     pub notification_type: Option<String>,
+    /// `StopFailure`'s reason. The field is `error`, not `error_type` — the
+    /// published reference says otherwise and is wrong, and the difference is
+    /// invisible at runtime because a missing field just means no reason.
     #[serde(default)]
-    pub error_type: Option<String>,
+    pub error: Option<String>,
+    /// True when a tool call ended because the user pressed Esc. A deliberate
+    /// interrupt is not a failure and must not paint the pet red.
     #[serde(default)]
-    pub how_started: Option<String>,
+    pub is_interrupt: Option<bool>,
+    /// How the session began: `startup`, `resume`, `clear`, `compact`, `fork`.
+    /// The field is `source`, not `how_started`, for the same reason as above.
+    #[serde(default)]
+    pub source: Option<String>,
+}
+
+/// The subject of a tool call, across the shapes different tools use.
+///
+/// Naming the seven keys rather than holding a whole `serde_json::Value` is
+/// what makes the privacy claim true rather than aspirational: a `Write`'s
+/// `content` is the file it is writing, and here it is skipped as it is
+/// parsed instead of being allocated and then ignored.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ToolInput {
+    #[serde(default, deserialize_with = "string_or_none")]
+    pub file_path: Option<String>,
+    #[serde(default, deserialize_with = "string_or_none")]
+    pub notebook_path: Option<String>,
+    #[serde(default, deserialize_with = "string_or_none")]
+    pub command: Option<String>,
+    #[serde(default, deserialize_with = "string_or_none")]
+    pub pattern: Option<String>,
+    #[serde(default, deserialize_with = "string_or_none")]
+    pub url: Option<String>,
+    #[serde(default, deserialize_with = "string_or_none")]
+    pub description: Option<String>,
+    #[serde(default, deserialize_with = "string_or_none")]
+    pub path: Option<String>,
+}
+
+/// Keep a value only when it is a string.
+///
+/// A target key can hold something other than a string — `MultiEdit` puts an
+/// array under `edits`, and tools are free to reuse these names for anything.
+/// Rejecting the whole payload over that would silently cost a state, and
+/// stringifying it would put a serialised array in the chip. Neither is worth
+/// it: the key simply does not contribute a target.
+fn string_or_none<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(match serde_json::Value::deserialize(deserializer) {
+        Ok(serde_json::Value::String(text)) => Some(text),
+        _ => None,
+    })
+}
+
+impl ToolInput {
+    /// The subject, most specific key first.
+    ///
+    /// Order settles the collisions: `Bash` carries both `command` and
+    /// `description` and wants the command, giving `Running npm test` (§5.1);
+    /// `Grep` carries `pattern` and `path`; `Write` carries `file_path`
+    /// alongside the file's whole contents, which are not a key here at all.
+    fn target(&self) -> Option<&str> {
+        [
+            &self.file_path,
+            &self.notebook_path,
+            &self.command,
+            &self.pattern,
+            &self.url,
+            &self.description,
+            &self.path,
+        ]
+        .into_iter()
+        .flatten()
+        .map(|value| value.trim())
+        .find(|value| !value.is_empty())
+    }
 }
 
 /// A body that was not a hook payload at all.
@@ -117,7 +181,7 @@ impl HookPayload {
             // It lands immediately after `PostCompact`, so emitting
             // `SessionStarted` here would drop the pet to Idle in the middle
             // of a live turn. PreCompact/PostCompact own that whole arc.
-            "SessionStart" if self.how_started.as_deref() == Some("compact") => None,
+            "SessionStart" if self.source.as_deref() == Some("compact") => None,
             "SessionStart" => Some(EventKind::SessionStarted),
 
             "UserPromptSubmit" => Some(EventKind::PromptSubmitted),
@@ -127,6 +191,14 @@ impl HookPayload {
                 target: self.target(),
             }),
             "PostToolUse" => Some(EventKind::ToolFinished),
+
+            // Esc is not a failure. The user interrupted the tool themselves,
+            // they know they did it, and painting the pet red would be both
+            // wrong and sticky. What is true afterwards is that Claude Code
+            // has handed control back, which is precisely `AttentionNeeded`.
+            "PostToolUseFailure" if self.is_interrupt == Some(true) => {
+                Some(EventKind::AttentionNeeded)
+            }
             "PostToolUseFailure" => Some(EventKind::ToolFailed {
                 kind: Some(FailureKind::ToolError),
             }),
@@ -154,7 +226,7 @@ impl HookPayload {
             // holding state across events for a number that is decoration.
             "Stop" => Some(EventKind::TurnFinished { duration: None }),
             "StopFailure" => Some(EventKind::TurnFailed {
-                kind: failure_kind(self.error_type.as_deref()),
+                kind: failure_kind(self.error.as_deref()),
             }),
 
             "PreCompact" => Some(EventKind::CompactStarted),
@@ -168,17 +240,10 @@ impl HookPayload {
         }
     }
 
-    /// What the tool is acting on, pulled out of a `tool_input` whose shape
-    /// differs per tool.
     fn target(&self) -> Option<String> {
-        let input = self.tool_input.as_ref()?.as_object()?;
-        TARGET_KEYS
-            .iter()
-            // Non-string values are skipped rather than stringified: a
-            // serialised array or object is noise in a 30-character chip.
-            .find_map(|key| input.get(*key).and_then(Value::as_str))
-            .map(str::trim)
-            .filter(|target| !target.is_empty())
+        self.tool_input
+            .as_ref()
+            .and_then(ToolInput::target)
             .map(truncate)
     }
 }
@@ -203,22 +268,26 @@ fn permission_verb(tool: &str) -> Option<String> {
 
 /// Why a turn failed, where the hook says.
 ///
-/// `FailureKind::describe` returns `Other`'s payload verbatim as UI copy, so
-/// these are capitalised to match the built-in arms and kept well short of
-/// `label::MAX_CHARS`. `Timeout` and `Cancelled` have no hook that reports
-/// them — nothing in the vocabulary distinguishes a user pressing Esc — so
-/// they stay reachable only from the mock rather than being invented here.
-fn failure_kind(error_type: Option<&str>) -> Option<FailureKind> {
-    match error_type? {
-        "rate_limit" => Some(FailureKind::RateLimit),
-        "overloaded" => Some(FailureKind::Other("Overloaded".to_string())),
-        "authentication_failed" => Some(FailureKind::Other("Auth failed".to_string())),
-        "server_error" => Some(FailureKind::Other("Server error".to_string())),
-        "max_output_tokens" => Some(FailureKind::Other("Output limit".to_string())),
+/// The values are `StopFailure`'s `error` enum. `FailureKind::describe`
+/// returns `Other`'s payload verbatim as UI copy, so these are capitalised to
+/// match the built-in arms and kept well short of `label::MAX_CHARS`.
+fn failure_kind(error: Option<&str>) -> Option<FailureKind> {
+    let text = match error? {
+        "rate_limit" => "",
+        "overloaded" => "Overloaded",
+        "authentication_failed" | "cloud_credential_error" => "Auth failed",
+        "oauth_org_not_allowed" | "account_on_hold" | "billing_error" => "Account problem",
+        "invalid_request" | "model_not_found" => "Request rejected",
+        "server_error" => "Server error",
+        "max_output_tokens" => "Output limit",
         // Including the literal "unknown", which carries no more information
         // than the generic "Turn failed" label already does.
-        _ => None,
+        _ => return None,
+    };
+    if text.is_empty() {
+        return Some(FailureKind::RateLimit);
     }
+    Some(FailureKind::Other(text.to_string()))
 }
 
 /// Bound a target on a character boundary, never a byte one.

@@ -399,9 +399,9 @@ mod tests {
         let body = r#"{"hook_event_name":"Stop","session_id":"s1"}"#;
         let cases = [
             // Wrong method.
-            format!("GET /hook HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n"),
+            "GET /hook HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n".to_string(),
             // Wrong path.
-            format!("POST / HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n"),
+            "POST / HTTP/1.1\r\nHost: h\r\nConnection: close\r\n\r\n".to_string(),
         ];
         for request in cases {
             let status = send(port, &request);
